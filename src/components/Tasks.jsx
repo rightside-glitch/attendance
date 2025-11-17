@@ -1,59 +1,89 @@
-import React, { useState } from 'react'
+import React, { useState, useEffect } from 'react'
 import { useAuth } from '../context/AuthContext'
-
-const sampleTasks = [
-  {
-    id: '1',
-    title: 'Complete Report',
-    description: 'Finish the Q4 performance report',
-    dueDate: '2025-11-20',
-    status: 'pending',
-    rating: 0,
-  },
-  {
-    id: '2',
-    title: 'Code Review',
-    description: 'Review pull requests for the API module',
-    dueDate: '2025-11-15',
-    status: 'in_progress',
-    rating: 0,
-  },
-  {
-    id: '3',
-    title: 'Training Session',
-    description: 'Complete the new tool training',
-    dueDate: '2025-11-12',
-    status: 'completed',
-    rating: 4.5,
-  },
-]
+import { createTask, updateTaskStatus, rateTask, getTasksForUser, getAllTasks, subscribeToUserTasks, subscribeToAllTasks, getAllUsers } from '../firebase/firestoreHelpers'
 
 export default function Tasks() {
-  const { userRole } = useAuth()
-  const [tasks, setTasks] = useState(sampleTasks)
+  const { user, userRole } = useAuth()
+  const [tasks, setTasks] = useState([])
+  const [users, setUsers] = useState([])
   const [showForm, setShowForm] = useState(false)
-  const [newTask, setNewTask] = useState({ title: '', description: '', dueDate: '' })
+  const [newTask, setNewTask] = useState({ title: '', description: '', dueDate: '', assignedTo: '' })
+  const [loading, setLoading] = useState(true)
 
-  const handleAddTask = () => {
-    if (newTask.title && newTask.dueDate) {
-      setTasks([...tasks, { ...newTask, id: Date.now().toString(), status: 'pending', rating: 0 }])
-      setNewTask({ title: '', description: '', dueDate: '' })
-      setShowForm(false)
+  useEffect(() => {
+    if (!user) return
+
+    const loadData = async () => {
+      try {
+        // Load users for assignment dropdown (admin/supervisor only)
+        if (userRole === 'admin' || userRole === 'supervisor') {
+          const usersData = await getAllUsers()
+          setUsers(usersData)
+        }
+
+        // Load initial tasks
+        const tasksData = userRole === 'admin' || userRole === 'supervisor'
+          ? await getAllTasks()
+          : await getTasksForUser(user.uid)
+        setTasks(tasksData)
+      } catch (error) {
+        console.error('Error loading tasks data:', error)
+      } finally {
+        setLoading(false)
+      }
+    }
+
+    loadData()
+
+    // Set up real-time subscriptions
+    const unsubscribeTasks = userRole === 'admin' || userRole === 'supervisor'
+      ? subscribeToAllTasks(setTasks)
+      : subscribeToUserTasks(user.uid, setTasks)
+
+    return () => unsubscribeTasks()
+  }, [user, userRole])
+
+  const handleAddTask = async () => {
+    if (newTask.title && newTask.dueDate && newTask.assignedTo) {
+      try {
+        await createTask(
+          newTask.title,
+          newTask.description,
+          newTask.assignedTo,
+          user.uid,
+          newTask.dueDate
+        )
+        setNewTask({ title: '', description: '', dueDate: '', assignedTo: '' })
+        setShowForm(false)
+      } catch (error) {
+        console.error('Error creating task:', error)
+        alert('Failed to create task. Please try again.')
+      }
     }
   }
 
-  const handleStatusChange = (taskId, newStatus) => {
-    setTasks((prev) =>
-      prev.map((task) => (task.id === taskId ? { ...task, status: newStatus } : task))
-    )
-    // TODO: Call updateTaskStatus() from firestoreHelpers.js
+  const handleStatusChange = async (taskId, newStatus) => {
+    try {
+      await updateTaskStatus(taskId, newStatus)
+      // UI will update via real-time subscription
+    } catch (error) {
+      console.error('Error updating task status:', error)
+      alert('Failed to update task status. Please try again.')
+    }
   }
 
-  const handleRateTask = (taskId, rating) => {
-    setTasks((prev) =>
-      prev.map((task) => (task.id === taskId ? { ...task, rating, status: 'completed' } : task))
-    )
-    // TODO: Call rateTask() from firestoreHelpers.js
+  const handleRateTask = async (taskId, rating) => {
+    try {
+      await rateTask(taskId, rating, '')
+      // UI will update via real-time subscription
+    } catch (error) {
+      console.error('Error rating task:', error)
+      alert('Failed to rate task. Please try again.')
+    }
+  }
+
+  if (loading) {
+    return <div className="p-6 text-gray-600">Loading tasks...</div>
   }
 
   return (
@@ -80,6 +110,7 @@ export default function Tasks() {
                 value={newTask.title}
                 onChange={(e) => setNewTask({ ...newTask, title: e.target.value })}
                 className="w-full px-3 py-2 border rounded"
+                required
               />
               <textarea
                 placeholder="Description"
@@ -88,15 +119,30 @@ export default function Tasks() {
                 className="w-full px-3 py-2 border rounded"
                 rows="3"
               />
+              <select
+                value={newTask.assignedTo}
+                onChange={(e) => setNewTask({ ...newTask, assignedTo: e.target.value })}
+                className="w-full px-3 py-2 border rounded"
+                required
+              >
+                <option value="">Select User to Assign</option>
+                {users.map((user) => (
+                  <option key={user.uid} value={user.uid}>
+                    {user.name} ({user.email}) - {user.role}
+                  </option>
+                ))}
+              </select>
               <input
                 type="date"
                 value={newTask.dueDate}
                 onChange={(e) => setNewTask({ ...newTask, dueDate: e.target.value })}
                 className="w-full px-3 py-2 border rounded"
+                required
               />
               <button
                 onClick={handleAddTask}
-                className="px-4 py-2 bg-green-600 text-white rounded hover:bg-green-700"
+                disabled={!newTask.title || !newTask.dueDate || !newTask.assignedTo}
+                className="px-4 py-2 bg-green-600 text-white rounded hover:bg-green-700 disabled:opacity-50"
               >
                 Save Task
               </button>
@@ -105,14 +151,21 @@ export default function Tasks() {
         )}
 
         <div className="space-y-3">
-          {tasks.map((task) => (
-            <div key={task.id} className="p-4 bg-gray-50 rounded border">
-              <div className="flex items-start justify-between">
-                <div className="flex-1">
-                  <h3 className="font-semibold">{task.title}</h3>
-                  <p className="text-sm text-gray-600 mt-1">{task.description}</p>
-                  <p className="text-xs text-gray-500 mt-2">Due: {task.dueDate}</p>
-                </div>
+          {tasks.map((task) => {
+            const assignedUser = users.find(u => u.uid === task.assignedTo)
+            const assignedUserName = assignedUser ? assignedUser.name : task.assignedTo
+            const dueDate = task.dueDate?.toDate ? task.dueDate.toDate().toISOString().split('T')[0] : task.dueDate
+
+            return (
+              <div key={task.id} className="p-4 bg-gray-50 rounded border">
+                <div className="flex items-start justify-between">
+                  <div className="flex-1">
+                    <h3 className="font-semibold">{task.title}</h3>
+                    <p className="text-sm text-gray-600 mt-1">{task.description}</p>
+                    <p className="text-xs text-gray-500 mt-2">
+                      Assigned to: {assignedUserName} | Due: {dueDate}
+                    </p>
+                  </div>
                 <div className="space-y-2 ml-4">
                   <span
                     className={`px-2 py-1 rounded text-xs font-semibold inline-block ${
@@ -154,7 +207,8 @@ export default function Tasks() {
                 )}
               </div>
             </div>
-          ))}
+          )
+        })}
         </div>
       </div>
     </div>

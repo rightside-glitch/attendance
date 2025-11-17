@@ -133,3 +133,50 @@ export async function getUserData(userId) {
   const snapshot = await getDocs(query(collection(db, 'users'), where('uid', '==', userId)))
   return snapshot.docs[0]?.data() || null
 }
+
+// --- Admin/Supervisor Helpers ---
+export async function getAllUsers() {
+  const usersRef = collection(db, 'users')
+  const q = query(usersRef)
+  const snapshot = await getDocs(q)
+  return snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }))
+}
+
+export async function getAllAttendance(startDate, endDate) {
+  const attendanceRef = collection(db, 'attendance')
+  const q = query(
+    attendanceRef,
+    where('date', '>=', startDate),
+    where('date', '<=', endDate)
+  )
+  const snapshot = await getDocs(q)
+  return snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }))
+}
+
+export async function getAllTasks() {
+  const tasksRef = collection(db, 'tasks')
+  const q = query(tasksRef)
+  const snapshot = await getDocs(q)
+  return snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }))
+}
+
+export function subscribeToAllTasks(callback) {
+  const tasksRef = collection(db, 'tasks')
+  return onSnapshot(tasksRef, (snapshot) => {
+    const tasks = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }))
+    callback(tasks)
+  })
+}
+
+export function subscribeToAllAttendance(startDate, endDate, callback) {
+  const attendanceRef = collection(db, 'attendance')
+  const q = query(
+    attendanceRef,
+    where('date', '>=', startDate),
+    where('date', '<=', endDate)
+  )
+  return onSnapshot(q, (snapshot) => {
+    const attendance = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }))
+    callback(attendance)
+  })
+}
